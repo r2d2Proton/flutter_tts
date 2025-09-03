@@ -10,6 +10,8 @@
 #include <memory>
 #include <sstream>
 
+#pragma comment(lib, "windowsapp.lib")
+
 typedef std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> FlutterResult;
 //typedef flutter::MethodResult<flutter::EncodableValue>* PFlutterResult;
 
