@@ -17,7 +17,6 @@ typedef std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> FlutterR
 
 std::unique_ptr<flutter::MethodChannel<>> methodChannel;
 
-#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP)
 #include <winrt/Windows.Media.SpeechSynthesis.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <winrt/Windows.Media.Core.h>
@@ -27,67 +26,101 @@ using namespace Concurrency;
 using namespace std::chrono_literals;
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
-namespace {
-	class FlutterTtsPlugin : public flutter::Plugin {
+
+
+class FlutterTtsPlugin : public flutter::Plugin
+{
 	public:
+
 		static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
+
 		FlutterTtsPlugin();
 		virtual ~FlutterTtsPlugin();
+
 	private:
-		// Called when a method is called on this plugin's channel from Dart.
-		void HandleMethodCall(
-			const flutter::MethodCall<flutter::EncodableValue>& method_call,
-			std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-		void speak(const std::string, FlutterResult);
-		void pause();
-		void continuePlay();
-		void stop();
+
+		void HandleMethodCall(const flutter::MethodCall<flutter::EncodableValue>& method_call, std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+
+		void getLanguages(flutter::EncodableList&);
+		void setLanguage(const std::string, FlutterResult&);
+
+		void getVoices(flutter::EncodableList&);
+		void setVoice(const std::string, const std::string, FlutterResult&);
+
 		void setVolume(const double);
 		void setPitch(const double);
 		void setRate(const double);
-		void getVoices(flutter::EncodableList&);
-		void setVoice(const std::string, const std::string, FlutterResult&);
-		void getLanguages(flutter::EncodableList&);
-		void setLanguage(const std::string, FlutterResult&);
-		void addMplayer();
+
+		void speak(const std::string, FlutterResult);
 		winrt::Windows::Foundation::IAsyncAction asyncSpeak(const std::string);
+		void pause();
+		void continuePlay();
+		void stop();
 		bool speaking();
 		bool paused();
+
+		void addMplayer();
+
+		void createResources();
+
 		SpeechSynthesizer synth;
 		winrt::Windows::Media::Playback::MediaPlayer mPlayer;
+
 		bool isPaused;
 		bool isSpeaking;
 		bool awaitSpeakCompletion;
 		FlutterResult speakResult;
-	};
+};
 
-	void FlutterTtsPlugin::RegisterWithRegistrar(
-		flutter::PluginRegistrarWindows* registrar) {
-		methodChannel =
-			std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-				registrar->messenger(), "flutter_tts",
-				&flutter::StandardMethodCodec::GetInstance());
+void FlutterTtsPluginRegisterWithRegistrar(FlutterDesktopPluginRegistrarRef registrar)
+{
+	//winrt::init_apartment(winrt::apartment_type::multi_threaded);
+	FlutterTtsPlugin::RegisterWithRegistrar(flutter::PluginRegistrarManager::GetInstance()->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
+}
+
+	void FlutterTtsPlugin::RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar)
+	{
+		methodChannel =	std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(registrar->messenger(), "flutter_tts", &flutter::StandardMethodCodec::GetInstance());
 		auto plugin = std::make_unique<FlutterTtsPlugin>();
 
 		methodChannel->SetMethodCallHandler(
 			[plugin_pointer = plugin.get()](const auto& call, auto result) {
 			plugin_pointer->HandleMethodCall(call, std::move(result));
 		});
+
 		registrar->AddPlugin(std::move(plugin));
 	}
 
-	void FlutterTtsPlugin::addMplayer() {
+	FlutterTtsPlugin::FlutterTtsPlugin()
+	{
+		createResources();
+	}
+
+	FlutterTtsPlugin::~FlutterTtsPlugin()
+	{
+		mPlayer.Close();
+		winrt::uninit_apartment();
+	}
+	
+	void FlutterTtsPlugin::createResources()
+	{
+		synth = SpeechSynthesizer();
 		mPlayer = winrt::Windows::Media::Playback::MediaPlayer::MediaPlayer();
-		auto mEndedToken =
-			mPlayer.MediaEnded([=](Windows::Media::Playback::MediaPlayer const& sender,
-				Windows::Foundation::IInspectable const& args)
-				{
-				    methodChannel->InvokeMethod("speak.onComplete", NULL);
-				    if (awaitSpeakCompletion) {
-                        speakResult->Success(1);
-                    }
-					isSpeaking = false;
-				});
+
+		isPaused = false;
+		isSpeaking = false;
+		awaitSpeakCompletion = false;
+		speakResult = FlutterResult();
+
+		auto mEndedToken = mPlayer.MediaEnded([=](Windows::Media::Playback::MediaPlayer const& sender, Windows::Foundation::IInspectable const& args)
+		{
+		    methodChannel->InvokeMethod("speak.onComplete", NULL);
+		    if (awaitSpeakCompletion)
+			{
+                speakResult->Success(1);
+            }
+			isSpeaking = false;
+		});
 	}
 
 	bool FlutterTtsPlugin::speaking() {
@@ -135,11 +168,10 @@ namespace {
             speakResult->Success(1);
         }
 
-		mPlayer.Close();
-		addMplayer();
 		isSpeaking = false;
 		isPaused = false;
 	}
+
 	void FlutterTtsPlugin::setVolume(const double newVolume) { synth.Options().AudioVolume(newVolume); }
 
 	void FlutterTtsPlugin::setPitch(const double newPitch) { synth.Options().AudioPitch(newPitch); }
@@ -202,6 +234,7 @@ namespace {
 				languages.push_back(value);
 			});
 	}
+
 	void FlutterTtsPlugin::setLanguage(const std::string voiceLanguage, FlutterResult& result) {
 		bool found = false;
 		auto voices = synth.AllVoices();
@@ -216,18 +249,6 @@ namespace {
 		else result->Success(0);
 	}
 
-
-	FlutterTtsPlugin::FlutterTtsPlugin() {
-		synth = SpeechSynthesizer();
-		addMplayer();
-		isPaused = false;
-		isSpeaking = false;
-		awaitSpeakCompletion = false;
-		speakResult = FlutterResult();
-	}
-
-	FlutterTtsPlugin::~FlutterTtsPlugin() { mPlayer.Close(); }
-
 	void FlutterTtsPlugin::HandleMethodCall(
 		const flutter::MethodCall<flutter::EncodableValue>& method_call,
 		FlutterResult result) {
@@ -236,328 +257,6 @@ namespace {
 			version_stream << "Windows UWP";
 			result->Success(flutter::EncodableValue(version_stream.str()));
 		}
-
-#else
-#include <string>
-#include <atlstr.h>
-#include <array>
-#include <sapi.h>
-#pragma warning(disable:4996)
-#include <sphelper.h>
-#pragma warning(default: 4996)
-namespace {
-
-	class FlutterTtsPlugin : public flutter::Plugin {
-	public:
-		static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
-		FlutterTtsPlugin();
-		virtual ~FlutterTtsPlugin();
-	private:
-		// Called when a method is called on this plugin's channel from Dart.
-		void HandleMethodCall(
-			const flutter::MethodCall<flutter::EncodableValue>& method_call,
-			std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-
-		void speak(const std::string, FlutterResult);
-		void pause();
-		void continuePlay();
-		void stop();
-		void setVolume(const double);
-		void setPitch(const double);
-		void setRate(const double);
-		void getVoices(flutter::EncodableList&);
-		void setVoice(const std::string, const std::string, FlutterResult&);
-		void getLanguages(flutter::EncodableList&);
-		void setLanguage(const std::string, FlutterResult&);
-
-		ISpVoice* pVoice;
-		bool awaitSpeakCompletion = false;
-		bool isPaused;
-		double pitch;
-		bool speaking();
-		bool paused();
-		FlutterResult speakResult;
-    	HANDLE addWaitHandle;
-	};
-
-	void FlutterTtsPlugin::RegisterWithRegistrar(
-		flutter::PluginRegistrarWindows* registrar) {
-		methodChannel =
-			std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-				registrar->messenger(), "flutter_tts",
-				&flutter::StandardMethodCodec::GetInstance());
-		auto plugin = std::make_unique<FlutterTtsPlugin>();
-		methodChannel->SetMethodCallHandler(
-			[plugin_pointer = plugin.get()](const auto& call, auto result) {
-			plugin_pointer->HandleMethodCall(call, std::move(result));
-		});
-
-		registrar->AddPlugin(std::move(plugin));
-	}
-
-	FlutterTtsPlugin::FlutterTtsPlugin() {
-		addWaitHandle = NULL;
-		isPaused = false;
-		speakResult = NULL;
-		pVoice = NULL;
-		HRESULT hr;
-		hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-		if (FAILED(hr))
-		{
-			throw std::exception("TTS init failed");
-		}
-
-		hr = CoCreateInstance(CLSID_SpVoice, NULL, CLSCTX_ALL, IID_ISpVoice, (void**)&pVoice);
-		if (FAILED(hr))
-		{
-			throw std::exception("TTS create instance failed");
-		}
-		pitch = 0;
-	}
-
-	FlutterTtsPlugin::~FlutterTtsPlugin() {
-		::CoUninitialize();
-	}
-
-    void CALLBACK setResult(PVOID lpParam, BOOLEAN TimerOrWaitFired)
-    {
-        flutter::MethodResult<flutter::EncodableValue>* p = (flutter::MethodResult<flutter::EncodableValue>*) lpParam;
-        p->Success(1);
-    }
-
-    void CALLBACK onCompletion(PVOID lpParam, BOOLEAN TimerOrWaitFired)
-    {
-        methodChannel->InvokeMethod("speak.onComplete", NULL);
-    }
-
-	bool FlutterTtsPlugin::speaking()
-	{
-		SPVOICESTATUS status;
-		pVoice->GetStatus(&status, NULL);
-		if (status.dwRunningState == SPRS_IS_SPEAKING) return true;
-		return false;
-	}
-	bool FlutterTtsPlugin::paused() { return isPaused; }
-
-
-	void FlutterTtsPlugin::speak(const std::string text, FlutterResult result) {
-		HRESULT hr;
-		const std::string arg = "<PITCH MIDDLE = '" + std::to_string(int((pitch - 1) * 10 * (1 + (pitch < 1)) )) + "'/>" + text;
-
-		int wchars_num = MultiByteToWideChar(CP_UTF8, 0, arg.c_str(), -1, NULL, 0);
-		wchar_t* wstr = new wchar_t[wchars_num];
-		MultiByteToWideChar(CP_UTF8, 0, arg.c_str(), -1, wstr, wchars_num);
-		hr = pVoice->Speak(wstr, 1, NULL);
-		delete[] wstr;
-		HANDLE speakCompletionHandle = pVoice->SpeakCompleteEvent();
-		methodChannel->InvokeMethod("speak.onStart", NULL);
-		RegisterWaitForSingleObject(&addWaitHandle, speakCompletionHandle, (WAITORTIMERCALLBACK)&onCompletion, speakResult.get(), INFINITE, WT_EXECUTEONLYONCE);
-		if (awaitSpeakCompletion){
-		    speakResult = std::move(result);
-		    RegisterWaitForSingleObject(&addWaitHandle, speakCompletionHandle, (WAITORTIMERCALLBACK)&setResult, speakResult.get(), INFINITE, WT_EXECUTEONLYONCE);
-		}
-		else result->Success(1);
-	}
-	void FlutterTtsPlugin::pause()
-	{
-		if (isPaused == false)
-		{
-			pVoice->Pause();
-			isPaused = true;
-		}
-	    methodChannel->InvokeMethod("speak.onPause", NULL);
-	}
-	void FlutterTtsPlugin::continuePlay()
-	{
-		isPaused = false;
-		pVoice->Resume();
-	    methodChannel->InvokeMethod("speak.onContinue", NULL);
-	}
-	void FlutterTtsPlugin::stop()
-	{
-		pVoice->Speak(L"", 2, NULL);
-		pVoice->Resume();
-		isPaused = false;
-	    methodChannel->InvokeMethod("speak.onCancel", NULL);
-	}
-	void FlutterTtsPlugin::setVolume(const double newVolume)
-	{
-		const USHORT volume = (short)(100 * newVolume);
-		pVoice->SetVolume(volume);
-	}
-	void FlutterTtsPlugin::setPitch(const double newPitch) {pitch = newPitch;}
-	void FlutterTtsPlugin::setRate(const double newRate)
-	{
-		const long speechRate = (long)((newRate - 0.5) * 15);
-		pVoice->SetRate(speechRate);
-	}
-	void FlutterTtsPlugin::getVoices(flutter::EncodableList& voices) {
-		HRESULT hr;
-		IEnumSpObjectTokens* cpEnum = NULL;
-		hr = SpEnumTokens(SPCAT_VOICES, NULL, NULL, &cpEnum);
-		if (FAILED(hr)) return;
-
- 		ULONG ulCount = 0;
-		// Get the number of voices.
-		hr = cpEnum->GetCount(&ulCount);
-		if (FAILED(hr)) return;
-		ISpObjectToken* cpVoiceToken = NULL;
-		while (ulCount--)
-		{
-			cpVoiceToken = NULL;
-			hr = cpEnum->Next(1, &cpVoiceToken, NULL);
-			if (FAILED(hr)) return;
-			CComPtr<ISpDataKey> cpAttribKey;
-			hr = cpVoiceToken->OpenKey(L"Attributes", &cpAttribKey);
-			if (FAILED(hr)) return;
-			WCHAR* psz = NULL;
-			hr = cpAttribKey->GetStringValue(L"Language", &psz);
-		    wchar_t locale[25];
-            LCIDToLocaleName((LCID)std::strtol(CW2A(psz), NULL, 16), locale, 25, 0);
-            ::CoTaskMemFree(psz);
-            std::string language = CW2A(locale);
-            psz = NULL;
-            cpAttribKey->GetStringValue(L"Name", &psz);
-			std::string name = CW2A(psz);
-			::CoTaskMemFree(psz);
-            flutter::EncodableMap voiceInfo;
-            voiceInfo[flutter::EncodableValue("locale")] = language;
-            voiceInfo[flutter::EncodableValue("name")] = name;
-            voices.push_back(flutter::EncodableMap(voiceInfo));
-			cpVoiceToken->Release();
-		}
-	}
-	void FlutterTtsPlugin::setVoice(const std::string voiceLanguage, const std::string voiceName, FlutterResult& result) {
-		HRESULT hr;
-		IEnumSpObjectTokens* cpEnum = NULL;
-		hr = SpEnumTokens(SPCAT_VOICES, NULL, NULL, &cpEnum);
-		if (FAILED(hr)) { result->Success(0); return; }
-		ULONG ulCount = 0;
-		hr = cpEnum->GetCount(&ulCount);
-		if (FAILED(hr)) { result->Success(0); return; }
-		ISpObjectToken* cpVoiceToken = NULL;
-		bool success = false;
-		while (ulCount--)
-		{
-			cpVoiceToken = NULL;
-			hr = cpEnum->Next(1, &cpVoiceToken, NULL);
-			if (FAILED(hr)) { result->Success(0); return; }
-			CComPtr<ISpDataKey> cpAttribKey;
-			hr = cpVoiceToken->OpenKey(L"Attributes", &cpAttribKey);
-			if (FAILED(hr)) { result->Success(0); return; }
-			WCHAR* psz = NULL;
-			hr = cpAttribKey->GetStringValue(L"Name", &psz);
-			if (FAILED(hr)) { result->Success(0); return; }
-			std::string name = CW2A(psz);
-			::CoTaskMemFree(psz);
-			psz = NULL;
-			hr = cpAttribKey->GetStringValue(L"Language", &psz);
-		    wchar_t locale[25];
-            LCIDToLocaleName((LCID)std::strtol(CW2A(psz), NULL, 16), locale, 25, 0);
-            ::CoTaskMemFree(psz);
-            std::string language = CW2A(locale);
-			if (name == voiceName && language == voiceLanguage)
-			{
-				pVoice->SetVoice(cpVoiceToken);
-				success = true;
-			}
-			cpVoiceToken->Release();
-		}
-		result->Success(success ? 1 : 0);
-	}
-	void FlutterTtsPlugin::getLanguages(flutter::EncodableList& languages)
-	{
-		HRESULT hr;
-		IEnumSpObjectTokens* cpEnum = NULL;
-		hr = SpEnumTokens(SPCAT_VOICES, NULL, NULL, &cpEnum);
-		if (FAILED(hr)) return;
-
- 		ULONG ulCount = 0;
-		// Get the number of voices.
-		hr = cpEnum->GetCount(&ulCount);
-		if (FAILED(hr)) return;
-		ISpObjectToken* cpVoiceToken = NULL;
-        std::set<flutter::EncodableValue> languagesSet = {};
-		while (ulCount--)
-		{
-			cpVoiceToken = NULL;
-			hr = cpEnum->Next(1, &cpVoiceToken, NULL);
-			if (FAILED(hr)) return;
-			CComPtr<ISpDataKey> cpAttribKey;
-			hr = cpVoiceToken->OpenKey(L"Attributes", &cpAttribKey);
-			if (FAILED(hr)) return;
-
-			WCHAR* psz = NULL;
-			hr = cpAttribKey->GetStringValue(L"Language", &psz);
-		    wchar_t locale[25];
-            LCIDToLocaleName((LCID)std::strtol(CW2A(psz), NULL, 16), locale, 25, 0);
-            std::string language = CW2A(locale);
-			languagesSet.insert(flutter::EncodableValue(language));
-			::CoTaskMemFree(psz);
-			cpVoiceToken->Release();
-		}
-        std::for_each(begin(languagesSet), end(languagesSet), [&languages](const flutter::EncodableValue value)
-            {
-                languages.push_back(value);
-            });
-	}
-
-	void FlutterTtsPlugin::setLanguage(const std::string voiceLanguage, FlutterResult& result) {
-		HRESULT hr;
-		IEnumSpObjectTokens* cpEnum = NULL;
-		hr = SpEnumTokens(SPCAT_VOICES, NULL, NULL, &cpEnum);
-		if (FAILED(hr)) { result->Success(0); return; }
-		ULONG ulCount = 0;
-		hr = cpEnum->GetCount(&ulCount);
-		if (FAILED(hr)) { result->Success(0); return; }
-		ISpObjectToken* cpVoiceToken = NULL;
-		bool found = false;
-		while (ulCount--)
-		{
-			cpVoiceToken = NULL;
-			hr = cpEnum->Next(1, &cpVoiceToken, NULL);
-			if (FAILED(hr)) { result->Success(0); return; }
-			CComPtr<ISpDataKey> cpAttribKey;
-			hr = cpVoiceToken->OpenKey(L"Attributes", &cpAttribKey);
-			if (FAILED(hr)) { result->Success(0); return; }
-
-			WCHAR* psz = NULL;
-			hr = cpAttribKey->GetStringValue(L"Language", &psz);
-		    wchar_t locale[25];
-            LCIDToLocaleName((LCID)std::strtol(CW2A(psz), NULL, 16), locale, 25, 0);
-            std::string language = CW2A(locale);
-			if (language == voiceLanguage)
-			{
-				pVoice->SetVoice(cpVoiceToken);
-				found = true;
-			}
-			::CoTaskMemFree(psz);
-			cpVoiceToken->Release();
-		}
-		if (found) result->Success(1);
-		else result->Success(0);
-	}
-
-
-	void FlutterTtsPlugin::HandleMethodCall(
-		const flutter::MethodCall<flutter::EncodableValue>& method_call,
-		FlutterResult result) {
-
-		if (method_call.method_name().compare("getPlatformVersion") == 0) {
-			std::ostringstream version_stream;
-			version_stream << "Windows ";
-			if (IsWindows10OrGreater()) {
-				version_stream << "10+";
-			}
-			else if (IsWindows8OrGreater()) {
-				version_stream << "8";
-			}
-			else if (IsWindows7OrGreater()) {
-				version_stream << "7";
-			}
-			result->Success(flutter::EncodableValue(version_stream.str()));
-		}
-#endif
 		else if (method_call.method_name().compare("awaitSpeakCompletion") == 0) {
             const flutter::EncodableValue arg = method_call.arguments()[0];
             if (std::holds_alternative<bool>(arg)) {
@@ -579,7 +278,7 @@ namespace {
 			else result->Success(0);
 		}
 		else if (method_call.method_name().compare("pause") == 0) {
-			FlutterTtsPlugin::pause();
+			pause();
 			result->Success(1);
 		}
 		else if (method_call.method_name().compare("setLanguage") == 0) {
@@ -651,11 +350,3 @@ namespace {
 			result->NotImplemented();
 		}
 	}
-}
-
-void FlutterTtsPluginRegisterWithRegistrar(
-	FlutterDesktopPluginRegistrarRef registrar) {
-	FlutterTtsPlugin::RegisterWithRegistrar(
-		flutter::PluginRegistrarManager::GetInstance()
-		->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
-}
